@@ -1,8 +1,9 @@
 # Caipy
 
-A Character.AI–style chat app for iOS that talks to your **local LM Studio** server.
-Recreates the C.AI chat UI — character cards, message bubbles, streaming replies —
-and connects to an OpenAI-compatible LM Studio endpoint over your Wi-Fi.
+A local AI companion app for iOS with three modes: **Characters** (roleplay with
+custom personas), **Assistant** (plain AI chat), and **Image Studio** (ComfyUI
+txt2img generation). Talks to your local LM Studio, Ollama, or any
+OpenAI-compatible server.
 
 Built with **Expo + React Native (TypeScript)**. The `.ipa` builds for free on
 **GitHub Actions** (macOS runner, no Mac needed, no $99 Apple Developer account).
@@ -12,12 +13,14 @@ Sideload onto your iPhone via **SideStore** with a free Apple ID.
 
 ## What it does
 
-- 🦊 Create characters (name, avatar emoji, personality/system prompt, temperature)
-- 💬 Chat with a C.AI-style UI: user bubbles right, AI left with avatar + name, streaming token-by-token, typing indicator, regenerate
-- 🔌 Connects to LM Studio's OpenAI-compatible API (`/v1/chat/completions`, SSE streaming)
-- ⚙️ Settings: server URL, optional API key, model picker (auto-loads from `/v1/models`), max tokens, theme
-- 🔒 Server URL + API key stored in the iOS Keychain; chats/characters in AsyncStorage
-- 📡 Works over your LAN (phone and Arch box on the same Wi-Fi)
+- 🦊 **Characters** — create personas (name, avatar emoji, system prompt, temperature) and have streaming C.AI-style chats with them
+- 🤖 **Assistant** — plain AI chat without any character persona; configurable system prompt
+- 🖼️ **Image Studio** — generate images with ComfyUI: built-in Simple mode (txt2img with auto-detected models/samplers) or Advanced mode (paste your own API workflow JSON)
+- 🔌 **Multi-provider** — works with LM Studio, Ollama, or any OpenAI-compatible `/v1` endpoint (single code path)
+- ⚙️ Settings: provider picker, server URL, optional API key, model picker (auto-loads from `/v1/models`), max tokens, assistant system prompt, ComfyUI URL, theme
+- 🔒 Server URL + API key + ComfyUI URL stored in the iOS Keychain; chats/characters in AsyncStorage
+- 📡 Works over your LAN (phone and server on the same Wi-Fi)
+- 🎨 Dark/light theme, animated tab bar, skeleton loading, gradient buttons
 
 ---
 
@@ -57,25 +60,42 @@ push to repo  ──────────────►  Actions runs on
 
 ---
 
-## 1. LM Studio setup (on your Arch box)
+## 1. Server setup
+
+Pick one (or more) backends. The app's Settings tab lets you switch providers at any time.
+
+### LM Studio
 
 1. Open **LM Studio → Developer** tab.
 2. Start the server on port **1234**.
-3. **Toggle "Serve on Local Network"** — this binds `0.0.0.0` instead of `localhost`,
-   which your phone needs to reach it. Without this, the connection silently fails.
-4. **Load a model** in LM Studio (the same model id the app will show).
-5. Find your Arch box's LAN IP:
+3. **Toggle "Serve on Local Network"** — this binds `0.0.0.0` instead of `localhost`.
+4. **Load a model** in LM Studio.
+5. In the app, go to **Settings → Provider → LM Studio**, enter `http://<lan-ip>:1234/v1`, tap **Test connection**.
+
+### Ollama
+
+1. Install Ollama and pull a model:
    ```bash
-   ip -br addr        # look for your wlan/eth interface, e.g. 192.168.1.50
+   ollama pull llama3.2
    ```
-6. From the phone, sanity-check it's reachable (any browser):
+2. Start the server with CORS enabled:
+   ```bash
+   OLLAMA_ORIGINS=* ollama serve
    ```
-   http://192.168.1.50:1234/v1/models
+3. In the app, go to **Settings → Provider → Ollama**, enter `http://<lan-ip>:11434/v1`, tap **Test connection**.
+
+### ComfyUI (for Image Studio)
+
+1. Install ComfyUI and load a checkpoint model.
+2. Start with network access:
+   ```bash
+   python main.py --listen 0.0.0.0 --port 8188
    ```
-   You should see a JSON list of models.
+3. In the app, go to **Settings → ComfyUI server URL**, enter `http://<lan-ip>:8188`.
+4. Switch to the **Image** tab, tap **Connect** to auto-detect your models/samplers.
 
 > **Security note:** Binding to `0.0.0.0` exposes the API to everyone on your Wi-Fi.
-> That's fine at home; don't forward port 1234 through your router.
+> That's fine at home; don't forward these ports through your router.
 
 ---
 
@@ -160,11 +180,12 @@ and tap **Refresh** on Caipy. No USB needed after the first pairing.
 
 ## 4. Configure the app
 
-1. Open Caipy → **Settings** (⚙️ gear in the top-right of Home).
-2. **Server URL**: `http://192.168.1.50:1234/v1` (your Arch box's LAN IP).
-3. **API key**: optional — LM Studio doesn't require one by default.
+1. Open Caipy → **Settings** tab at the bottom.
+2. **Provider**: pick LM Studio, Ollama, or Custom.
+3. **Server URL**: enter your server's LAN address (e.g. `http://192.168.1.50:11434/v1`).
 4. Tap **Test connection**. You should see ✓ Connected and a model list.
-5. Pick a model. Done — go back and tap a character to start chatting.
+5. Pick a model. Done — switch to Characters or Assistant tab and start chatting.
+6. For images: enter your ComfyUI URL in Settings, then go to the Image tab and tap Connect.
 
 ---
 
@@ -209,13 +230,42 @@ caipy/
 ├── assets/                           icon, splash, adaptive icon (generated)
 ├── scripts/gen-assets.js              regenerates assets
 └── src/
-    ├── types.ts
-    ├── api/lmstudio.ts               OpenAI-compat client + SSE streaming
-    ├── store/                        zustand stores (settings, characters, chats)
-    ├── screens/                      Home, Chat, CharacterEditor, Settings
-    ├── components/                   Avatar, MessageBubble, TypingIndicator, …
-    ├── navigation/                   RootNavigator + route types
-    └── theme/                        dark/light palettes + useTheme hook
+    ├── types.ts                      Chat, Character, Settings, GeneratedImage types
+    ├── api/
+    │   ├── chat.ts                   OpenAI-compat client (LM Studio / Ollama / custom)
+    │   └── comfyui.ts               ComfyUI REST API client (object_info, queue, poll)
+    ├── store/
+    │   ├── settings.ts               provider, baseUrl, model, comfyUrl, theme, …
+    │   ├── characters.ts             character CRUD
+    │   ├── chats.ts                  chat CRUD (character + assistant modes)
+    │   └── images.ts                 generated image gallery (file:// URIs)
+    ├── hooks/
+    │   └── useChatEngine.ts          shared streaming logic with throttled store writes
+    ├── screens/
+    │   ├── HomeScreen.tsx             character list
+    │   ├── ChatScreen.tsx             character chat
+    │   ├── CharacterEditorScreen.tsx  create/edit characters
+    │   ├── AssistantHomeScreen.tsx    assistant chat list
+    │   ├── AssistantChatScreen.tsx    assistant chat
+    │   ├── ImageStudioScreen.tsx      ComfyUI image generation
+    │   ├── ImageDetailScreen.tsx      image viewer
+    │   └── SettingsScreen.tsx         provider, model, theme, comfy config
+    ├── components/
+    │   ├── Avatar.tsx
+    │   ├── MessageBubble.tsx          memoized, animated entrance
+    │   ├── ChatInput.tsx              animated send/stop morph
+    │   ├── CharacterCard.tsx          animated entrance + press scale
+    │   ├── GradientButton.tsx         gradient primary button
+    │   ├── Skeleton.tsx               shimmer loading placeholder
+    │   └── EmptyState.tsx             emoji + title + subtitle
+    ├── navigation/
+    │   ├── RootNavigator.tsx          NavigationContainer + BottomTabs
+    │   ├── Tabs.tsx                   custom animated tab bar (4 tabs)
+    │   └── types.ts                   per-tab param lists
+    └── theme/
+        ├── colors.ts                  dark/light palettes + gradient tokens
+        ├── types.ts                   Theme type definition
+        └── useTheme.ts                context + hook
 ```
 
 ---
@@ -238,11 +288,11 @@ caipy/
 
 ### Sideload issues
 
-**"Couldn't reach LM Studio"**
-- Is LM Studio's server running? (Developer tab → server started)
-- Is **Serve on Local Network** on?
-- Are phone and Arch box on the same Wi-Fi? (not a guest network)
-- Try `http://192.168.1.50:1234/v1/models` in the phone's browser — JSON?
+**"Couldn't reach the server"**
+- Is your server running? (LM Studio Developer tab / `ollama serve` / ComfyUI)
+- Is it bound to `0.0.0.0` or `--listen 0.0.0.0`? (not just localhost)
+- Are phone and server on the same Wi-Fi? (not a guest network)
+- Try `http://<ip>:<port>/v1/models` in the phone's browser — should return JSON.
 - Some routers isolate Wi-Fi clients; disable "AP isolation" if so.
 
 **App installs but won't open / "Untrusted Developer"**

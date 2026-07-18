@@ -58,7 +58,10 @@ export function HomeScreen({ navigation }: RootStackScreenProps<"Home">) {
           </Text>
         </View>
         <Pressable
-          onPress={() => navigation.navigate("Settings")}
+          onPress={() => {
+            // Settings is in a sibling tab — navigate via the parent (tab) navigator
+            navigation.getParent()?.navigate("SettingsTab");
+          }}
           hitSlop={12}
           style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1 }]}
         >

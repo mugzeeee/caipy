@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import type { Chat, Message } from "@/types";
+import type { Chat, ChatMode, Message } from "@/types";
 
 const uid = () =>
   `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -24,13 +24,31 @@ interface ChatsState {
   chats: Chat[];
   /** Ensure a chat exists for the character; create if missing. Returns chat id. */
   ensureChat: (characterId: string, opening?: Message) => string;
+  /** Create a new plain assistant chat (no character). Returns chat id. */
+  createAssistantChat: () => string;
   getChat: (id: string) => Chat | undefined;
   getForCharacter: (characterId: string) => Chat | undefined;
+  getAssistantChats: () => Chat[];
   appendMessage: (chatId: string, message: Message) => void;
   updateMessage: (chatId: string, messageId: string, patch: Partial<Message>) => void;
   removeMessagesFrom: (chatId: string, fromMessageId: string) => Message[];
   setTitle: (chatId: string, title: string) => void;
   deleteChat: (chatId: string) => void;
+}
+
+function newChat(
+  mode: ChatMode,
+  init: { characterId?: string; title?: string; messages?: Message[] }
+): Chat {
+  return {
+    id: uid(),
+    mode,
+    characterId: init.characterId,
+    title: init.title ?? "New chat",
+    messages: init.messages ?? [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
 }
 
 export const useChatsStore = create<ChatsState>()(
@@ -39,24 +57,33 @@ export const useChatsStore = create<ChatsState>()(
       chats: [],
 
       ensureChat: (characterId, opening) => {
-        const existing = get().chats.find((c) => c.characterId === characterId);
+        const existing = get().chats.find(
+          (c) => c.characterId === characterId && c.mode !== "assistant"
+        );
         if (existing) return existing.id;
-        const id = uid();
-        const chat: Chat = {
-          id,
+        const chat = newChat("character", {
           characterId,
-          title: "New chat",
           messages: opening ? [opening] : [],
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        };
+        });
         set({ chats: [chat, ...get().chats] });
-        return id;
+        return chat.id;
+      },
+
+      createAssistantChat: () => {
+        const chat = newChat("assistant", {});
+        set({ chats: [chat, ...get().chats] });
+        return chat.id;
       },
 
       getChat: (id) => get().chats.find((c) => c.id === id),
+
       getForCharacter: (characterId) =>
-        get().chats.find((c) => c.characterId === characterId),
+        get().chats.find(
+          (c) => c.characterId === characterId && c.mode !== "assistant"
+        ),
+
+      getAssistantChats: () =>
+        get().chats.filter((c) => c.mode === "assistant"),
 
       appendMessage: (chatId, message) =>
         set({

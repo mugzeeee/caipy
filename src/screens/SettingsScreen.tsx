@@ -8,26 +8,34 @@ import {
   Pressable,
   SafeAreaView,
   ActivityIndicator,
-  Alert,
 } from "react-native";
 import * as Haptics from "expo-haptics";
 import { useSettingsStore } from "@/store/settings";
-import { listModels, normalizeBaseUrl, LMStudioError, type ModelInfo } from "@/api/lmstudio";
+import { listModels, normalizeBaseUrl, ApiError, type ModelInfo } from "@/api/chat";
 import { useTheme } from "@/theme/useTheme";
+import type { Provider } from "@/types";
+
+const PROVIDER_LABELS: Record<Provider, { label: string; hint: string }> = {
+  lmstudio: { label: "LM Studio", hint: "http://<ip>:1234/v1" },
+  ollama: { label: "Ollama", hint: "http://<ip>:11434/v1" },
+  custom: { label: "Custom", hint: "Any OpenAI-compatible /v1 endpoint" },
+};
 
 export function SettingsScreen() {
   const theme = useTheme();
   const {
-    baseUrl, apiKey, model, maxTokens, theme: themePref,
-    setBaseUrl, setApiKey, setModel, setMaxTokens, setTheme,
+    provider, baseUrl, apiKey, model, maxTokens, assistantSystemPrompt, comfyUrl, theme: themePref,
+    setProvider, setBaseUrl, setApiKey, setModel, setMaxTokens, setAssistantSystemPrompt, setComfyUrl, setTheme,
   } = useSettingsStore();
 
   const [urlDraft, setUrlDraft] = useState(baseUrl);
   const [keyDraft, setKeyDraft] = useState(apiKey);
+  const [comfyDraft, setComfyDraft] = useState(comfyUrl);
   const [testing, setTesting] = useState(false);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [statusText, setStatusText] = useState<string | null>(null);
   const [statusOk, setStatusOk] = useState<boolean | null>(null);
+  const [promptDraft, setPromptDraft] = useState(assistantSystemPrompt);
 
   const testConnection = async () => {
     setTesting(true);
@@ -41,18 +49,18 @@ export function SettingsScreen() {
       const found = await listModels(url, keyDraft);
       setModels(found);
       if (found.length === 0) {
-        setStatusText("Connected, but no models loaded in LM Studio.");
+        setStatusText("Connected, but no models found. Check your server.");
         setStatusOk(false);
       } else {
-        setStatusText(`✓ Connected — ${found.length} model${found.length > 1 ? "s" : ""}.`);
+        setStatusText(`Connected — ${found.length} model${found.length > 1 ? "s" : ""}.`);
         setStatusOk(true);
         if (!model && found.length > 0) setModel(found[0].id);
       }
-    } catch (e) {
+    } catch (e: unknown) {
       const msg =
-        e instanceof LMStudioError
+        e instanceof ApiError
           ? e.message
-          : "Network error. Confirm LM Studio is running, on the same Wi-Fi, with 'Serve on Local Network' on.";
+          : "Network error. Confirm your server is running and reachable from your phone.";
       setStatusText(msg);
       setStatusOk(false);
     } finally {
@@ -68,14 +76,49 @@ export function SettingsScreen() {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]}>
       <ScrollView contentContainerStyle={{ padding: 18, gap: 18 }}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>LM Studio</Text>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>Settings</Text>
 
+        {/* ── Provider ────────────────────────────────────────── */}
+        <View style={{ gap: 6 }}>
+          <Text style={[styles.label, { color: theme.textMuted }]}>Provider</Text>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            {(["lmstudio", "ollama", "custom"] as Provider[]).map((p) => (
+              <Pressable
+                key={p}
+                onPress={() => {
+                  setProvider(p);
+                  setUrlDraft(useSettingsStore.getState().baseUrl);
+                  Haptics.selectionAsync();
+                }}
+                style={[
+                  styles.providerBtn,
+                  {
+                    backgroundColor: provider === p ? theme.primary : theme.surfaceMuted,
+                    borderColor: theme.border,
+                  },
+                ]}
+              >
+                <Text
+                  style={{
+                    color: provider === p ? "#fff" : theme.textMuted,
+                    fontWeight: "700",
+                    fontSize: 13,
+                  }}
+                >
+                  {PROVIDER_LABELS[p].label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
+        {/* ── Server URL ──────────────────────────────────────── */}
         <View style={{ gap: 6 }}>
           <Text style={[styles.label, { color: theme.textMuted }]}>Server URL</Text>
           <TextInput
             value={urlDraft}
             onChangeText={setUrlDraft}
-            placeholder="http://192.168.1.50:1234/v1"
+            placeholder={PROVIDER_LABELS[provider].hint}
             placeholderTextColor={theme.textDim}
             autoCapitalize="none"
             autoCorrect={false}
@@ -83,17 +126,15 @@ export function SettingsScreen() {
             style={inputStyle}
             onBlur={() => setBaseUrl(normalizeBaseUrl(urlDraft))}
           />
-          <Text style={[styles.hint, { color: theme.textDim }]}>
-            Find your Arch box's LAN IP with `ip addr`. Include :1234.
-          </Text>
         </View>
 
+        {/* ── API key ─────────────────────────────────────────── */}
         <View style={{ gap: 6 }}>
           <Text style={[styles.label, { color: theme.textMuted }]}>API key (optional)</Text>
           <TextInput
             value={keyDraft}
             onChangeText={setKeyDraft}
-            placeholder="lm-studio"
+            placeholder={provider === "ollama" ? "ollama" : "leave blank if none"}
             placeholderTextColor={theme.textDim}
             autoCapitalize="none"
             autoCorrect={false}
@@ -102,6 +143,7 @@ export function SettingsScreen() {
           />
         </View>
 
+        {/* ── Test connection ─────────────────────────────────── */}
         <Pressable
           onPress={testConnection}
           disabled={testing}
@@ -133,7 +175,7 @@ export function SettingsScreen() {
           </View>
         )}
 
-        {/* Model picker */}
+        {/* ── Model picker ────────────────────────────────────── */}
         <View style={{ gap: 6 }}>
           <Text style={[styles.label, { color: theme.textMuted }]}>Model</Text>
           {models.length > 0 ? (
@@ -180,6 +222,7 @@ export function SettingsScreen() {
           )}
         </View>
 
+        {/* ── Max tokens ──────────────────────────────────────── */}
         <View style={{ gap: 6 }}>
           <Text style={[styles.label, { color: theme.textMuted }]}>
             Max response tokens: {maxTokens}
@@ -211,6 +254,40 @@ export function SettingsScreen() {
           </View>
         </View>
 
+        {/* ── Assistant system prompt ─────────────────────────── */}
+        <View style={{ gap: 6 }}>
+          <Text style={[styles.label, { color: theme.textMuted }]}>Assistant system prompt</Text>
+          <TextInput
+            value={promptDraft}
+            onChangeText={setPromptDraft}
+            onBlur={() => setAssistantSystemPrompt(promptDraft)}
+            placeholder="You are a helpful, concise assistant."
+            placeholderTextColor={theme.textDim}
+            multiline
+            style={[styles.inputMultiline, inputStyle]}
+          />
+        </View>
+
+        {/* ── ComfyUI URL ─────────────────────────────────────── */}
+        <View style={{ gap: 6 }}>
+          <Text style={[styles.label, { color: theme.textMuted }]}>ComfyUI server URL</Text>
+          <TextInput
+            value={comfyDraft}
+            onChangeText={setComfyDraft}
+            placeholder="http://192.168.1.50:8188"
+            placeholderTextColor={theme.textDim}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+            style={inputStyle}
+            onBlur={() => setComfyUrl(comfyDraft.trim())}
+          />
+          <Text style={[styles.hint, { color: theme.textDim }]}>
+            ComfyUI must run with --listen 0.0.0.0
+          </Text>
+        </View>
+
+        {/* ── Theme ───────────────────────────────────────────── */}
         <View style={{ gap: 6 }}>
           <Text style={[styles.label, { color: theme.textMuted }]}>Theme</Text>
           <View style={{ flexDirection: "row", gap: 8 }}>
@@ -224,22 +301,26 @@ export function SettingsScreen() {
                 ]}
               >
                 <Text style={{ color: themePref === t ? "#fff" : theme.textMuted, fontWeight: "700" }}>
-                  {t === "dark" ? "🌙 Dark" : "☀️ Light"}
+                  {t === "dark" ? "Dark" : "Light"}
                 </Text>
               </Pressable>
             ))}
           </View>
         </View>
 
+        {/* ── Help box ────────────────────────────────────────── */}
         <View style={[styles.helpBox, { backgroundColor: theme.surfaceMuted }]}>
           <Text style={[styles.helpTitle, { color: theme.text }]}>
-            One-time LM Studio setup
+            Quick setup
           </Text>
           <Text style={[styles.helpText, { color: theme.textMuted }]}>
-            1. In LM Studio → Developer tab, start the server on port 1234.{"\n"}
-            2. Toggle "Serve on Local Network" so it binds 0.0.0.0.{"\n"}
-            3. Load a model (the same one shown above).{"\n"}
-            4. Make sure your phone and Arch box are on the same Wi-Fi.
+            {provider === "lmstudio"
+              ? "In LM Studio: Developer tab → Start server on 1234 → Toggle 'Serve on Local Network'."
+              : provider === "ollama"
+                ? "Run: OLLAMA_ORIGINS=* ollama serve. The app talks to port 11434."
+                : "Point this at any OpenAI-compatible /v1 endpoint."}
+            {"\n\n"}
+            Make sure your phone and server are on the same Wi-Fi.
           </Text>
         </View>
       </ScrollView>
@@ -258,6 +339,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 13,
     fontSize: 16,
+  },
+  inputMultiline: {
+    minHeight: 70,
+    textAlignVertical: "top",
+  },
+  providerBtn: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 10,
+    alignItems: "center",
   },
   testBtn: { paddingVertical: 14, borderRadius: 14, alignItems: "center", justifyContent: "center" },
   testBtnText: { color: "#fff", fontSize: 16, fontWeight: "800" },

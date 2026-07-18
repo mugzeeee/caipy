@@ -1,8 +1,10 @@
 import EventSource from "react-native-sse";
 import type { Message } from "@/types";
 
-// LM Studio exposes an OpenAI-compatible API at http://<host>:1234/v1
-// Docs: https://lmstudio.ai/docs/developer/openai-compat
+// OpenAI-compatible chat client. Works against any /v1 endpoint:
+// LM Studio (http://host:1234/v1), Ollama (http://host:11434/v1),
+// or any custom OpenAI-compatible server. All three use the same
+// /v1/chat/completions + /v1/models surface, so we need one code path.
 
 export interface ModelInfo {
   id: string;
@@ -10,14 +12,21 @@ export interface ModelInfo {
   owned_by?: string;
 }
 
-export class LMStudioError extends Error {
+export class ApiError extends Error {
   status?: number;
   constructor(message: string, status?: number) {
     super(message);
-    this.name = "LMStudioError";
+    this.name = "ApiError";
     this.status = status;
   }
 }
+
+/** Default suggested base URLs for each provider. */
+export const PROVIDER_DEFAULTS: Record<string, string> = {
+  lmstudio: "http://192.168.1.50:1234/v1",
+  ollama: "http://192.168.1.50:11434/v1",
+  custom: "",
+};
 
 /** Normalize whatever the user typed into a clean base URL with /v1. */
 export function normalizeBaseUrl(input: string): string {
@@ -49,7 +58,7 @@ export async function listModels(
   const res = await fetch(url, { method: "GET", headers: authHeaders(apiKey) });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new LMStudioError(
+    throw new ApiError(
       `Server responded ${res.status} ${res.statusText}. ${body}`.trim(),
       res.status
     );
@@ -84,7 +93,7 @@ export interface ChatRequestOptions {
  * which works on RN (the browser EventSource doesn't support POST + headers).
  *
  * We fall back to a non-streaming request if the server rejects SSE, so the app
- * still works even with quirky LM Studio builds.
+ * still works even with quirky server builds.
  */
 export async function streamChat(opts: ChatRequestOptions): Promise<void> {
   const {
@@ -165,8 +174,8 @@ export async function streamChat(opts: ChatRequestOptions): Promise<void> {
       onDone(fullText);
       return;
     }
-    const msg = e?.message || "Network error — is LM Studio running and on the same Wi-Fi?";
-    onError(new LMStudioError(msg), fullText);
+    const msg = e?.message || "Network error — is your server running and on the same Wi-Fi?";
+    onError(new ApiError(msg), fullText);
   });
 }
 
@@ -191,7 +200,7 @@ export async function quickChat(
     signal,
   });
   if (!res.ok) {
-    throw new LMStudioError(`HTTP ${res.status}`, res.status);
+    throw new ApiError(`HTTP ${res.status}`, res.status);
   }
   const data = await res.json();
   return data?.choices?.[0]?.message?.content ?? "";

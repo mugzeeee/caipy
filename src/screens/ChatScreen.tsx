@@ -21,7 +21,7 @@ import {
   makeMessage,
 } from "@/store/chats";
 import { useSettingsStore } from "@/store/settings";
-import { streamChat, LMStudioError } from "@/api/lmstudio";
+import { streamChat, ApiError } from "@/api/chat";
 import type { Message } from "@/types";
 import type { RootStackScreenProps } from "@/navigation/types";
 import { useTheme } from "@/theme/useTheme";
@@ -100,7 +100,7 @@ export function ChatScreen({ route, navigation }: RootStackScreenProps<"Chat">) 
     if (sendDisabled) {
       Alert.alert(
         "Not configured",
-        "Set your LM Studio server URL and pick a model in Settings first."
+        "Set your server URL and pick a model in Settings first."
       );
       return;
     }
@@ -125,7 +125,7 @@ export function ChatScreen({ route, navigation }: RootStackScreenProps<"Chat">) 
       temperature: character.temperature,
       maxTokens,
       signal: controller.signal,
-      onToken: (_delta, full) => {
+      onToken: (_delta: string, full: string) => {
         buffered = full;
         if (firstToken) {
           firstToken = false;
@@ -137,7 +137,7 @@ export function ChatScreen({ route, navigation }: RootStackScreenProps<"Chat">) 
         });
         scrollToBottom();
       },
-      onDone: (full) => {
+      onDone: (full: string) => {
         updateMessage(chatFromStore!.id, placeholder.id, {
           content: full || "_(no response)_",
           streaming: false,
@@ -145,11 +145,11 @@ export function ChatScreen({ route, navigation }: RootStackScreenProps<"Chat">) 
         setGenerating(false);
         abortRef.current = null;
       },
-      onError: (err, partial) => {
+      onError: (err: Error, partial: string) => {
         const msg =
-          err instanceof LMStudioError && err.status
+          err instanceof ApiError && err.status
             ? err.message
-            : "Couldn't reach LM Studio. Check it's running, on the same Wi-Fi, and that 'Serve on Local Network' is on.";
+            : "Couldn't reach the server. Check it's running and reachable from your phone.";
         updateMessage(chatFromStore!.id, placeholder.id, {
           content: partial || msg,
           streaming: false,
@@ -264,7 +264,7 @@ export function ChatScreen({ route, navigation }: RootStackScreenProps<"Chat">) 
       {sendDisabled && (
         <View style={[styles.banner, { backgroundColor: theme.surfaceMuted }]}>
           <Text style={[styles.bannerText, { color: theme.textMuted }]}>
-            ⚠️ Set your LM Studio server URL and model in Settings to start chatting.
+            ⚠️ Set your server URL and pick a model in Settings to start chatting.
           </Text>
         </View>
       )}
