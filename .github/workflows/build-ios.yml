@@ -69,12 +69,9 @@ jobs:
 
       - name: Archive (unsigned)
         run: |
-          mkdir -p ../build
           cd ios
-          SCHEME=$(xcodebuild -list -workspace *.xcworkspace 2>/dev/null | awk '/Schemes:/{found=1; next} found && NF {print; exit}' | xargs)
-          if [ -z "$SCHEME" ]; then
-            SCHEME=$(xcodebuild -list -project *.xcodeproj 2>/dev/null | awk '/Schemes:/{found=1; next} found && NF {print; exit}' | xargs)
-          fi
+          mkdir -p ../build
+          SCHEME="Caipy"
           echo "Using scheme: $SCHEME"
           xcodebuild \
             -workspace *.xcworkspace \
@@ -89,7 +86,6 @@ jobs:
             DEVELOPMENT_TEAM="" \
             | tee ../build/xcodebuild-archive.log
         env:
-          # Speed up build; avoid interactive prompts
           CI: "true"
 
       - name: Package unsigned .ipa
