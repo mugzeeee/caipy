@@ -69,10 +69,11 @@ jobs:
 
       - name: Archive (unsigned)
         run: |
+          mkdir -p ../build
           cd ios
-          SCHEME=$(xcodebuild -list -workspace *.xcworkspace 2>/dev/null | awk '/Schemes:/{found=1} found && NF {print; exit}' | xargs)
+          SCHEME=$(xcodebuild -list -workspace *.xcworkspace 2>/dev/null | awk '/Schemes:/{found=1; next} found && NF {print; exit}' | xargs)
           if [ -z "$SCHEME" ]; then
-            SCHEME=$(xcodebuild -list -project *.xcodeproj 2>/dev/null | awk '/Schemes:/{found=1} found && NF {print; exit}' | xargs)
+            SCHEME=$(xcodebuild -list -project *.xcodeproj 2>/dev/null | awk '/Schemes:/{found=1; next} found && NF {print; exit}' | xargs)
           fi
           echo "Using scheme: $SCHEME"
           xcodebuild \
