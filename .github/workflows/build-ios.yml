@@ -1,0 +1,124 @@
+name: Build iOS (unsigned)
+
+# Builds an UNSIGNED .ipa for sideloading via SideStore (free Apple ID).
+# Runs on GitHub's free macOS runner. Free for PUBLIC repos.
+# (For private repos, macOS minutes count against your paid quota — ~10x Linux cost.)
+#
+# Why unsigned? Producing a *signed* .ipa requires a paid $99 Apple Developer
+# account. An unsigned .ipa is free to build anywhere; SideStore signs it
+# on-device with a free Apple ID. Result: real installable app, $0, no $99.
+# Caveat: free Apple ID signing expires every 7 days (refresh via SideStore).
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch: # manual "Run workflow" button in the Actions tab
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+
+      - name: Select Xcode
+        run: |
+          # Pin a known-good Xcode on the macos-latest image.
+          sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+
+      - name: Install JS dependencies
+        run: yarn install --immutable --network-timeout 600000
+
+      - name: Generate native iOS project (expo prebuild)
+        run: |
+          # Prebuild renders the ios/ folder from app.config.ts so xcodebuild
+          # has a real Xcode project to compile. We keep --no-install to skip
+          # a redundant yarn install (we already did that), but we must run
+          # pod install manually afterward since CocoaPods resolves the workspace.
+          npx expo prebuild --platform ios --clean --no-install
+
+      - name: Install CocoaPods dependencies
+        run: |
+          cd ios
+          # GitHub macos-latest images ship CocoaPods pre-installed.
+          pod install --repo-update
+
+      - name: Resolve signing for unsigned build
+        run: |
+          # Tell Xcode NOT to codesign during the archive — we want an unsigned
+          # bundle so SideStore can sign it with a free Apple ID.
+          cd ios
+          # Patch the project to disable automatic signing + code signing.
+          PBX=$(ls *.xcodeproj/project.pbxproj)
+          cp "$PBX" "$PBX.bak"
+          # Turn off automatic signing globally
+          sed -i '' 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' "$PBX"
+          # Strip any hard-coded development team so manual signing doesn't choke
+          sed -i '' 's/DEVELOPMENT_TEAM = [A-Z0-9]*;/DEVELOPMENT_TEAM = "";/g' "$PBX"
+          # Disable code signing requirement for the archive build
+          echo "signing patched"
+
+      - name: Archive (unsigned)
+        run: |
+          cd ios
+          SCHEME=$(xcodebuild -list -workspace *.xcworkspace 2>/dev/null | awk '/Schemes:/{found=1} found && NF {print; exit}' | xargs)
+          if [ -z "$SCHEME" ]; then
+            SCHEME=$(xcodebuild -list -project *.xcodeproj 2>/dev/null | awk '/Schemes:/{found=1} found && NF {print; exit}' | xargs)
+          fi
+          echo "Using scheme: $SCHEME"
+          xcodebuild \
+            -workspace *.xcworkspace \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath ../build/Caipy.xcarchive \
+            archive \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM="" \
+            | tee ../build/xcodebuild-archive.log
+        env:
+          # Speed up build; avoid interactive prompts
+          CI: "true"
+
+      - name: Package unsigned .ipa
+        run: |
+          set -e
+          mkdir -p build/Payload
+          APP=$(find build/Caipy.xcarchive/Products/Applications -maxdepth 1 -name "*.app" | head -1)
+          if [ -z "$APP" ]; then
+            echo "::error::No .app found in archive"
+            exit 1
+          fi
+          echo "Found: $APP"
+          # SideStore expects a Payload/<App>.app structure zipped as .ipa
+          cp -R "$APP" build/Payload/
+          cd build
+          zip -qr Caipy-unsigned.ipa Payload
+          ls -lh Caipy-unsigned.ipa
+
+      - name: Upload .ipa artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: caipy-unsigned-ipa
+          path: build/Caipy-unsigned.ipa
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload build log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: build/xcodebuild-archive.log
+          if-no-files-found: ignore
